@@ -46,7 +46,7 @@ func (c *GobCodec) Write(h *Header, body interface{}) (err error) {
 		return
 	}
 	if err = c.enc.Encode(body); err != nil {
-		log.Println("rpc: gob error encoding body:", err)
+		log.Println("xiao rpc: gob error encoding body:", err)
 		return
 	}
 	return

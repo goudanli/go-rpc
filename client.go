@@ -195,6 +195,7 @@ func (client *Client) send(call *Call) {
 
 	// encode and send the request
 	if err := client.cc.Write(&client.header, call.Args); err != nil {
+		log.Println("client cc Write error")
 		call := client.removeCall(seq)
 		// call may be nil, it usually means that Write partially failed,
 		// client has received the response and handled
