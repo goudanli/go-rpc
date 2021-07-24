@@ -1,6 +1,8 @@
 package geerpc
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -201,6 +204,7 @@ func dialTimeout(f newClientFunc, network, address string, opts ...*Option) (cli
 	}
 }
 
+//opts 表示可变参数
 func Dial(network string, address string, opts ...*Option) (client *Client, err error) {
 	return dialTimeout(NewClient, network, address, opts...)
 }
@@ -253,10 +257,31 @@ func (client *Client) Go(serviceMethod string, args interface{}, reply interface
 // Call invokes the named function, waits for it to complete,
 // and returns its error status.
 //同步接口
-func (client *Client) Call(serviceMethod string, args interface{}, reply interface{}) error {
+func (client *Client) Call(ctx context.Context, serviceMethod string, args interface{}, reply interface{}) error {
 	// call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
 	// return call.Error
 	call := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
-	result := <-call.Done
-	return result.Error
+	select {
+	case <-ctx.Done():
+		client.removeCall(call.Seq)
+		return errors.New("rpc client:call failed:" + ctx.Err().Error())
+	case result := <-call.Done:
+		return result.Error
+	}
+}
+
+func NewHTTPClient(conn net.Conn, opt *Option) (*Client, error) {
+	_, _ = io.WriteString(conn, fmt.Sprintf("CONNECT %s HTTP/1.0\n\n", defaultRPCPath))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "CONNECT"})
+	if err == nil && resp.Status == connected {
+		return NewClient(conn, opt)
+	}
+	if err == nil {
+		err = errors.New("unexpected HTTP response: " + resp.Status)
+	}
+	return nil, err
+}
+
+func DialHTTP(network, address string, opts ...*Option) (*Client, error) {
+	return dialTimeout(NewHTTPClient, network, address, opts...)
 }

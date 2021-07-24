@@ -3,10 +3,12 @@ package geerpc
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"geerpc/codec"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -122,7 +124,7 @@ func (server *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go server.handleRequest(cc, req, sending, wg)
+		go server.handleRequest(cc, req, sending, wg, time.Second*3)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -182,15 +184,35 @@ func (server *Server) sendResponse(cc codec.Codec, h *codec.Header, body interfa
 	}
 }
 
-func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	// TODO, should call registered rpc methods to get the right replyv
 	// day 1, just print argv and send a hello message
 	defer wg.Done()
-	err := req.svc.call(req.mtype, req.argv, req.replyv)
-	if err != nil {
-		req.h.Error = err.Error()
-		server.sendResponse(cc, req.h, invalidRequest, sending)
+	called := make(chan struct{})
+	sent := make(chan struct{})
+	go func() {
+		err := req.svc.call(req.mtype, req.argv, req.replyv)
+		called <- struct{}{}
+		if err != nil {
+			req.h.Error = err.Error()
+			server.sendResponse(cc, req.h, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
+	}()
+	if timeout == 0 {
+		<-called
+		<-sent
 		return
+	}
+	select {
+	case <-time.After(timeout):
+		req.h.Error = fmt.Sprintf("rpc server: request handle timeout: expect within %s", timeout)
+		server.sendResponse(cc, req.h, invalidRequest, sending)
+	case <-called:
+		<-sent
 	}
 	//log.Println(req.h, req.argv.Elem())
 	// log.Println(req.h, *req.argv)
@@ -198,5 +220,38 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 	// str := fmt.Sprintf("geerpc resp %d", req.h.Seq)
 	// req.replyv = &str
 	//server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
-	server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+	//server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+}
+
+const (
+	connected      = "200 Connected to Gee RPC"
+	defaultRPCPath = "/_geeprc_"
+	//defaultDebugPath = "/debug/geerpc"
+)
+
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	log.Printf("req.Method %s", req.Method)
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	server.ServeConn(conn)
+}
+
+func (server *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, server)
+	//http.Handle(defaultDebugPath, debugHTTP{server})
+	//log.Println("rpc server debug path:", defaultDebugPath)
+}
+
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }
