@@ -22,8 +22,9 @@ func (f Foo) Sum(args Args, reply *int) error {
 }
 
 func startServer(addr chan string) {
+	srver := geerpc.NewServer()
 	var foo Foo
-	if err := geerpc.Register(&foo); err != nil {
+	if err := srver.Register(&foo); err != nil {
 		log.Fatal("register error:", err)
 	}
 	// pick a free port
@@ -34,7 +35,7 @@ func startServer(addr chan string) {
 	log.Println("start rpc server on", l.Addr())
 	//geerpc.HandleHTTP()
 	addr <- l.Addr().String()
-	_ = http.Serve(l, geerpc.DefaultServer)
+	_ = http.Serve(l, srver)
 	//geerpc.Accept(l)
 }
 
