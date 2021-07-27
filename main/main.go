@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"geerpc"
+	"geerpc/xclient"
 	"log"
 	"net"
 	"net/http"
 	"sync"
-	"time"
 )
 
 type Foo int
@@ -39,11 +39,40 @@ func startServer(addr chan string) {
 	//geerpc.Accept(l)
 }
 
+func call(addr1, addr2 string) {
+	d := xclient.NewMultiServerDiscovery([]string{"http@" + addr1, "http@" + addr2})
+	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
+	defer func() { _ = xc.Close() }()
+	// send request & receive response
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			//foo(xc, context.Background(), "call", "Foo.Sum", &Args{Num1: i, Num2: i * i})
+			var reply int
+			var err error
+			args := &Args{Num1: i, Num2: i * i}
+			err = xc.Call(context.Background(), "Foo.Sum", args, &reply)
+			if err != nil {
+				log.Printf("call Foo.Sum error: %v", err)
+			} else {
+				log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
 func main() {
 	log.SetFlags(0)
-	addr := make(chan string)
-	go startServer(addr)
-
+	ch1 := make(chan string)
+	ch2 := make(chan string)
+	go startServer(ch1)
+	go startServer(ch2)
+	addr1 := <-ch1
+	addr2 := <-ch2
+	call(addr1, addr2)
 	//in fact, following code is like a simple geerpc client
 	// conn, _ := net.Dial("tcp", <-addr)
 	// defer func() { _ = conn.Close() }()
@@ -66,47 +95,23 @@ func main() {
 	// 	log.Println("reply:", reply)
 	// }
 
-	client, _ := geerpc.DialHTTP("tcp", <-addr)
-	defer func() { _ = client.Close() }()
+	// client, _ := geerpc.DialHTTP("tcp", addr1)
+	// defer func() { _ = client.Close() }()
 
-	time.Sleep(time.Second)
-	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			args := &Args{Num1: i, Num2: i * i}
-			var reply int
-			ctx, _ := context.WithTimeout(context.Background(), time.Second)
-			if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
-				log.Fatal("call Foo.Sum error:", err)
-			}
-			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
-		}(i)
-		wg.Wait()
-	}
-
-	// reflect test
-	// var foo Foo
-	// log.Printf("test=%s", reflect.TypeOf(&foo))
+	// time.Sleep(time.Second)
 	// var wg sync.WaitGroup
-	// typ := reflect.TypeOf(&wg)
-	// for i := 0; i < typ.NumMethod(); i++ {
-	// 	method := typ.Method(i)
-	// 	argv := make([]string, 0, method.Type.NumIn())
-	// 	returns := make([]string, 0, method.Type.NumOut())
-	// 	// j 从 1 开始，第 0 个入参是 wg 自己
-	// 	log.Printf("func first param=%s", method.Type.In(0).String())
-	// 	for j := 1; j < method.Type.NumIn(); j++ {
-	// 		argv = append(argv, method.Type.In(j).Name())
-	// 	}
-	// 	for j := 0; j < method.Type.NumOut(); j++ {
-	// 		returns = append(returns, method.Type.Out(j).Name())
-	// 	}
-	// 	log.Printf("func (w *%s) %s(%s) %s",
-	// 		typ.Elem().Name(),
-	// 		method.Name,
-	// 		strings.Join(argv, ","),
-	// 		strings.Join(returns, ","))
+	// for i := 0; i < 5; i++ {
+	// 	wg.Add(1)
+	// 	go func(i int) {
+	// 		defer wg.Done()
+	// 		args := &Args{Num1: i, Num2: i * i}
+	// 		var reply int
+	// 		ctx, _ := context.WithTimeout(context.Background(), time.Second)
+	// 		if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
+	// 			log.Fatal("call Foo.Sum error:", err)
+	// 		}
+	// 		log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
+	// 	}(i)
+	// 	wg.Wait()
 	// }
 }

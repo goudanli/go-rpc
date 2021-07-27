@@ -33,6 +33,7 @@ var DefaultOption = &Option{
 
 type Server struct {
 	serviceMap sync.Map
+	addr       string
 }
 
 func NewServer() *Server {
@@ -199,6 +200,7 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 			sent <- struct{}{}
 			return
 		}
+		log.Printf("server %s handle", server.addr)
 		server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 		sent <- struct{}{}
 	}()
@@ -236,12 +238,15 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, "405 must CONNECT\n")
 		return
 	}
-	log.Printf("req.Method %s", req.Method)
+
 	conn, _, err := w.(http.Hijacker).Hijack()
 	if err != nil {
 		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
 		return
 	}
+
+	//log.Printf("server %s OnRequest", conn.LocalAddr())
+	server.addr = conn.LocalAddr().String()
 	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
 	server.ServeConn(conn)
 }
